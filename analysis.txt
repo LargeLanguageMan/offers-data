@@ -1,0 +1,88 @@
+AUTOMOTIVE OFFERS DATA ANALYSIS REPORT
+===============================================
+
+OVERVIEW:
+This dataset contains comprehensive automotive sales and marketing data for multiple vehicle models from September 2023 to August 2025, focusing on offer effectiveness and media spend analysis across the Australian market.
+
+DATA STRUCTURE:
+- 11,217 total rows of data
+- 32 time-based columns covering monthly data from Sep-23 to Aug-25
+- Core dimensions: Sales Rank, Segment, Make, Model, Category
+- Key metrics tracked for each model include:
+  * Sales volumes and market share
+  * Incentive offers and pricing
+  * Media spend by channel
+  * Cost per sale calculations
+
+KEY VEHICLE SEGMENTS IDENTIFIED:
+1. PU/CC (Pick-up/Commercial): Ford Ranger, Toyota HiLux
+2. SUV Medium < $60K: Toyota RAV4
+3. SUV Small < $45K: Hyundai Kona
+4. SUV Light: Hyundai Venue
+
+OFFER TYPES DISCOVERED:
+Finance-based Offers:
+- Finance (standard financing offers)
+- Finance + Roadside Assist packages
+- Weekly payment plans (mentioned in brief but need to identify in data)
+
+Drive-away Pricing:
+- "Driveaway" offers (complete on-road pricing)
+- "Reduced Price" promotions
+
+Value-added Services:
+- Servicing packages
+- Accessory bundles
+- Factory bonuses
+- Demonstrator vehicle deals
+- Limited edition packages
+
+HYUNDAI VENUE CASE STUDY FINDINGS:
+- Segment: SUV Light
+- Sales volumes: Average 415 per month (2024), ranging from 327-584
+- Market share: ~11-12% of SUV Light segment
+- Offer type: Consistently uses "Driveaway" pricing strategy
+- Above the Line Weighted Incentive: $289K average, up to $4.3M in 2025
+- CPV (Customer Purchase Value): Ranges $500-$1,745
+
+CRITICAL DATA PATTERNS:
+1. Time Coverage: 24 months historical data (Sep 2023 - Aug 2025)
+2. Seasonal Trends: Visible fluctuations in sales volumes month-to-month
+3. Incentive Spending: Varies significantly by model and time period
+4. Media Spend Breakdown: Multiple channels tracked (TV, Radio, Outdoor, Digital)
+
+OFFER EFFECTIVENESS INDICATORS:
+- Above the Line Weighted Incentive values per model
+- CPV (Customer Purchase Value) high/low ranges
+- Cost per sale calculations
+- Segment market share performance
+- Media spend efficiency ratios
+
+KEY QUESTIONS THE DATA CAN ANSWER:
+1. Which offers (Finance vs Driveaway) have highest market penetration by model
+2. Seasonal effectiveness of different offer types
+3. Regional/demographic performance (limited data available)
+4. ROI on marketing spend vs sales conversion
+5. Venue model weekly payment success (need to identify specific data)
+
+DATA LIMITATIONS IDENTIFIED:
+1. No explicit weekly payment offer data found yet - may need deeper analysis
+2. Limited geographical breakdown beyond general Australian market
+3. Competitor data not present - will need external sources
+4. Customer demographic data not available
+5. Website visit data mentioned in brief but not found in current dataset
+
+EXTERNAL DATA SOURCES NEEDED:
+1. Competitor offer analysis from automotive industry reports
+2. Cost-of-living crisis impact data from Australian Bureau of Statistics
+3. Market trend data from automotive industry associations
+4. Website analytics data for offer page visits
+5. Hyundai Capital finance data from November 2024 onwards (as mentioned in brief)
+
+RECOMMENDED DASHBOARD FOCUS:
+1. Timeline visualizations showing offer effectiveness over time
+2. Model comparison charts for sales vs offer type
+3. Seasonal trend analysis with month-year x-axis
+4. Media spend efficiency analysis
+5. Venue model deep-dive section
+6. Market share impact visualization by offer type
