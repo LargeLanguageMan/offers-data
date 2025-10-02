@@ -14,9 +14,9 @@ st.set_page_config(
 )
 
 # Configure Gemini AI
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    st.error("⚠️ GEMINI_API_KEY not found. Please configure it in Streamlit Cloud secrets.")
+    st.error("⚠️ GEMINI_API_KEY not found. Please configure it in Streamlit secrets or environment variables.")
     st.stop()
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-exp')
