@@ -13,6 +13,51 @@ st.set_page_config(
     layout="wide"
 )
 
+# Authentication function
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if (st.session_state["username"] == "offers" and
+            st.session_state["password"] == "innocean2025"):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+            del st.session_state["username"]  # Don't store username
+        else:
+            st.session_state["password_correct"] = False
+
+    # First run, show inputs for username + password
+    if "password_correct" not in st.session_state:
+        st.markdown("## 🔐 Login")
+        st.markdown("Please enter your credentials to access the dashboard")
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.text_input("Username", key="username", on_change=password_entered)
+            st.text_input("Password", type="password", key="password", on_change=password_entered)
+            st.button("Login", on_click=password_entered, type="primary", use_container_width=True)
+        return False
+    # Password correct
+    elif st.session_state["password_correct"]:
+        return True
+    # Password incorrect
+    else:
+        st.markdown("## 🔐 Login")
+        st.markdown("Please enter your credentials to access the dashboard")
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.text_input("Username", key="username", on_change=password_entered)
+            st.text_input("Password", type="password", key="password", on_change=password_entered)
+            st.button("Login", on_click=password_entered, type="primary", use_container_width=True)
+            st.error("😕 Username or password incorrect")
+        return False
+
+# Check authentication before proceeding
+if not check_password():
+    st.stop()
+
 # Configure Gemini AI
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
