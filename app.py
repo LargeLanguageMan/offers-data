@@ -19,8 +19,8 @@ def check_password():
 
     def password_entered():
         """Checks whether a password entered by the user is correct."""
-        if (st.session_state["username"] == "offers" and
-            st.session_state["password"] == "innocean2025"):
+        if (st.session_state.get("username") == "offers" and
+            st.session_state.get("password") == "innocean2025"):
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # Don't store password
             del st.session_state["username"]  # Don't store username
@@ -34,9 +34,10 @@ def check_password():
 
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.text_input("Username", key="username", on_change=password_entered)
-            st.text_input("Password", type="password", key="password", on_change=password_entered)
-            st.button("Login", on_click=password_entered, type="primary", use_container_width=True)
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", key="password")
+            if st.button("Login", type="primary", use_container_width=True):
+                password_entered()
         return False
     # Password correct
     elif st.session_state["password_correct"]:
@@ -48,9 +49,10 @@ def check_password():
 
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.text_input("Username", key="username", on_change=password_entered)
-            st.text_input("Password", type="password", key="password", on_change=password_entered)
-            st.button("Login", on_click=password_entered, type="primary", use_container_width=True)
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", key="password")
+            if st.button("Login", type="primary", use_container_width=True):
+                password_entered()
             st.error("😕 Username or password incorrect")
         return False
 
