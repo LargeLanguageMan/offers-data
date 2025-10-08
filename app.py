@@ -71,7 +71,7 @@ model = genai.GenerativeModel('gemini-2.0-flash-exp')
 @st.cache_data
 def load_comprehensive_data():
     """Load the comprehensive joined dataset"""
-    df = pd.read_csv('comprehensive_joined_dataset.csv')
+    df = pd.read_csv('data/generated/comprehensive_joined_dataset.csv')
 
     # Convert sales to numeric, handling empty strings
     df['Sales_Total'] = pd.to_numeric(df['Sales_Total'], errors='coerce').fillna(0)
@@ -90,10 +90,112 @@ def load_comprehensive_data():
     return df, df_offers
 
 @st.cache_data
+def load_website_data():
+    """Load and aggregate website visit data"""
+    # Load total website visits
+    df_total_web = pd.read_csv('data/archive/website-visit - total-web-month.csv')
+    # Load offers page views
+    df_offers_web = pd.read_csv('data/archive/website-visit - offers-web-month.csv')
+
+    # Aggregate by month (sum daily counts)
+    total_web_monthly = df_total_web.groupby('Month')['Event count'].sum().reset_index()
+    total_web_monthly.columns = ['Month', 'Total_Visits']
+
+    offers_web_monthly = df_offers_web.groupby('Month')['Event count'].sum().reset_index()
+    offers_web_monthly.columns = ['Month', 'Offers_Page_Views']
+
+    # Merge the two datasets
+    web_data = pd.merge(total_web_monthly, offers_web_monthly, on='Month', how='outer')
+
+    return web_data
+
+def get_hyundai_offers_by_month(df_offers):
+    """Extract Hyundai offers aggregated by month"""
+    # Filter for Hyundai
+    hyundai_offers = df_offers[df_offers['Make'] == 'Hyundai'].copy()
+
+    # Group by month and aggregate offers
+    monthly_offers = {}
+
+    for month in hyundai_offers['Month'].unique():
+        month_data = hyundai_offers[hyundai_offers['Month'] == month]
+
+        # Get all unique offers for this month across all Hyundai models
+        offers_list = []
+        for offer in month_data['Retail_Offer'].dropna():
+            if str(offer).strip() and str(offer) != 'nan':
+                # Split multiple offers separated by semicolons
+                offers = [o.strip() for o in str(offer).split(';') if o.strip()]
+                offers_list.extend(offers)
+
+        # Get unique offers
+        unique_offers = list(set(offers_list))
+
+        if unique_offers:
+            monthly_offers[month] = {
+                'offers': unique_offers,
+                'offer_display': ' + '.join(unique_offers) if len(unique_offers) > 1 else unique_offers[0],
+                'has_offer': True
+            }
+        else:
+            monthly_offers[month] = {
+                'offers': [],
+                'offer_display': None,
+                'has_offer': False
+            }
+
+    return monthly_offers
+
+@st.cache_data
+def load_make_level_media_spend():
+    """Load make-level media spend data from car-make-report.csv"""
+    # Load the car-make-report with malformed header handling
+    with open('data/source/car-make-report.csv', 'r') as f:
+        lines = f.readlines()
+
+    if '"Sales' in lines[0]:
+        header_line = lines[0].strip().replace('"Sales\n', 'Sales_') + lines[1].strip()
+        lines[1] = header_line + '\n'
+        lines = lines[1:]
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp_file:
+        tmp_file.writelines(lines)
+        tmp_path = tmp_file.name
+
+    df_make = pd.read_csv(tmp_path)
+    os.unlink(tmp_path)
+
+    # Filter for Total Media Spend rows
+    df_media = df_make[df_make['Category'] == 'Total Media Spend'].copy()
+
+    # Get monthly columns
+    monthly_cols = [col for col in df_media.columns if '-' in col and len(col) == 6]
+
+    # Create a dictionary: {Make: {Month: MediaSpend}}
+    media_spend_dict = {}
+
+    for _, row in df_media.iterrows():
+        make = row['Make']
+        media_spend_dict[make] = {}
+
+        for month_col in monthly_cols:
+            if month_col in row.index and pd.notna(row[month_col]):
+                # Clean and convert media spend value
+                media_val = str(row[month_col]).replace('$', '').replace(',', '').strip()
+                try:
+                    media_spend_dict[make][month_col] = float(media_val)
+                except (ValueError, TypeError):
+                    media_spend_dict[make][month_col] = 0
+            else:
+                media_spend_dict[make][month_col] = 0
+
+    return media_spend_dict
+
+@st.cache_data
 def load_data():
     """Load and process the automotive data with enhanced offer information"""
     # Load original car model report
-    with open('car-model-report.csv', 'r') as f:
+    with open('data/source/car-model-report.csv', 'r') as f:
         lines = f.readlines()
 
     if '"Sales' in lines[0]:
@@ -118,7 +220,7 @@ def load_data():
     df_original = df_original.rename(columns=column_mapping)
 
     # Load enhanced data with accurate offer information
-    with open('enhanced-data.csv', 'r') as f:
+    with open('data/source/enhanced-data.csv', 'r') as f:
         enhanced_lines = f.readlines()
 
     if '"Sales' in enhanced_lines[0]:
@@ -506,6 +608,7 @@ def generate_ai_insights(model_info):
         # Advanced Offer Analysis
         offer_months = data[data['Has_Offer'] == True]
         no_offer_months = data[data['Has_Offer'] == False]
+        total_months = len(data)
 
         if len(offer_months) > 0 and len(no_offer_months) > 0:
             avg_sales_with_offers = offer_months['Sales'].mean()
@@ -599,6 +702,7 @@ def generate_ai_insights(model_info):
         2. **OUTLIERS & ANOMALIES**: Explain any unusual spikes, drops, or irregular patterns in sales
 
         3. **OFFER PERFORMANCE ANALYSIS**:
+           - Offer Penetration Rate: {len(offer_months)}/{total_months} months = {(len(offer_months)/total_months*100):.1f}% - assess if this is optimal or if there are missed opportunities
            - Analyze which specific offer types (Finance, Driveaway, Factory Bonus, Gift Card, Servicing, etc.) correlate with highest sales
            - Identify the best-performing individual offer types based on the performance ranking data
            - Explain why certain offers might be more effective than others for this model/segment
@@ -769,27 +873,43 @@ def generate_offer_ai_insights(df_offers, analysis_type="market", selected_filte
 def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selected_makes=None):
     """Create market-level offer effectiveness chart"""
 
+    # Load make-level media spend data
+    media_spend_dict = load_make_level_media_spend()
+
     # Filter by make(s) if selected
     if selected_makes:
         df_filtered = df_offers[df_offers['Make'].isin(selected_makes)]
         title_suffix = f" - {', '.join(selected_makes[:3])}{'...' if len(selected_makes) > 3 else ''}"
+        makes_to_aggregate = selected_makes
     elif selected_make and selected_make != 'All Makes':
         df_filtered = df_offers[df_offers['Make'] == selected_make]
         title_suffix = f" - {selected_make}"
+        makes_to_aggregate = [selected_make]
     else:
         df_filtered = df_offers
         title_suffix = " - All Makes"
+        makes_to_aggregate = df_offers['Make'].unique().tolist()
 
     # Get all offer types
     offer_types = get_all_offer_types(df_filtered)
 
-    # Create monthly aggregation for each offer type
+    # Create monthly aggregation for each offer type and media spend
     monthly_data = {}
+    monthly_media_spend = {}
 
     for month in df_filtered['Month'].unique():
         monthly_data[month] = {}
-        month_data = df_filtered[df_filtered['Month'] == month]
 
+        # Calculate total media spend for the selected makes from make-level data
+        total_media = 0
+        for make in makes_to_aggregate:
+            if make in media_spend_dict and month in media_spend_dict[make]:
+                total_media += media_spend_dict[make][month]
+
+        monthly_media_spend[month] = total_media
+
+        # Calculate sales by offer type
+        month_data = df_filtered[df_filtered['Month'] == month]
         for offer_type in offer_types:
             total_sales = 0
 
@@ -799,8 +919,8 @@ def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selec
 
             monthly_data[month][offer_type] = total_sales
 
-    # Create the chart
-    fig = go.Figure()
+    # Create the chart with secondary y-axis
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
 
     # Sort months chronologically
     month_order = ['Aug-23', 'Sep-23', 'Oct-23', 'Nov-23', 'Dec-23',
@@ -813,7 +933,7 @@ def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selec
     colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#6A994E', '#7209B7', '#F72585', '#4361EE', '#F77F00', '#FCBF49',
               '#06FFA5', '#FB8500', '#219EBC', '#8ECAE6', '#FFB3BA', '#BAFFC9', '#BAE1FF', '#FFFFBA', '#E0BBE4', '#957DAD']
 
-    # Add traces for each offer type
+    # Add traces for each offer type (primary y-axis)
     for i, offer_type in enumerate(offer_types[:15]):  # Limit to top 15 for readability
         sales_data = [monthly_data[month].get(offer_type, 0) for month in sorted_months]
 
@@ -827,7 +947,21 @@ def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selec
                 line=dict(width=4, color=colors[i % len(colors)], shape='spline'),
                 marker=dict(size=8, color=colors[i % len(colors)], line=dict(width=2, color='white')),
                 hovertemplate=f'<b>{offer_type}</b><br>Month: %{{x}}<br>Sales Volume: <b>%{{y:,}}</b><extra></extra>'
-            ))
+            ), secondary_y=False)
+
+    # Add media spend line (secondary y-axis)
+    media_spend_data = [monthly_media_spend.get(month, 0) for month in sorted_months]
+
+    if max(media_spend_data) > 0:
+        fig.add_trace(go.Scatter(
+            x=sorted_months,
+            y=media_spend_data,
+            mode='lines',
+            name='Total Media Spend',
+            line=dict(width=3, color='#000000', dash='dot'),
+            opacity=0.8,
+            hovertemplate='<b>Media Spend</b><br>Month: %{x}<br>Total: <b>$%{y:,.0f}</b><extra></extra>'
+        ), secondary_y=True)
 
     fig.update_layout(
         title=dict(
@@ -838,17 +972,6 @@ def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selec
         ),
         xaxis=dict(
             title=dict(text='<b>Month</b>', font=dict(size=14, color='#1a1a1a')),
-            tickfont=dict(color='#1a1a1a', size=11),
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='#d0d0d0',
-            linecolor='#1a1a1a',
-            linewidth=2,
-            showline=True,
-            mirror=True
-        ),
-        yaxis=dict(
-            title=dict(text='<b>Sales Volume</b>', font=dict(size=14, color='#1a1a1a')),
             tickfont=dict(color='#1a1a1a', size=11),
             showgrid=True,
             gridwidth=1,
@@ -880,6 +1003,483 @@ def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selec
             font=dict(color='#1a1a1a', size=12, family='Arial')
         ),
         margin=dict(l=80, r=180, t=120, b=80)
+    )
+
+    # Set y-axes titles
+    fig.update_yaxes(
+        title=dict(text="<b>Sales Volume</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=False,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#d0d0d0',
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Media Spend ($)</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=True,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        tickformat='$,.0f'
+    )
+
+    return fig
+
+def create_website_visits_chart(web_data, media_spend_dict, monthly_offers):
+    """Create chart showing total website visits vs Hyundai media spend with offers"""
+
+    # Get Hyundai media spend
+    hyundai_media = media_spend_dict.get('Hyundai', {})
+
+    # Month order for proper sorting
+    month_order = ['Aug-23', 'Sep-23', 'Oct-23', 'Nov-23', 'Dec-23',
+                   'Jan-24', 'Feb-24', 'Mar-24', 'Apr-24', 'May-24', 'Jun-24', 'Jul-24', 'Aug-24', 'Sep-24', 'Oct-24', 'Nov-24', 'Dec-24',
+                   'Jan-25', 'Feb-25', 'Mar-25', 'Apr-25', 'May-25', 'Jun-25', 'Jul-25', 'Aug-25', 'Sep-25']
+
+    # Sort web_data by month order
+    web_data['Month_Order'] = web_data['Month'].map({month: i for i, month in enumerate(month_order)})
+    web_data_sorted = web_data.sort_values('Month_Order').drop('Month_Order', axis=1)
+
+    # Prepare data for chart
+    months = []
+    visits = []
+    media_spend = []
+    dates = []
+
+    for _, row in web_data_sorted.iterrows():
+        month = row['Month']
+        months.append(month)
+        visits.append(row['Total_Visits'])
+        media_spend.append(hyundai_media.get(month, 0))
+        # Convert month to date
+        try:
+            dates.append(pd.to_datetime(month, format='%b-%y'))
+        except:
+            dates.append(None)
+
+    # Create chart with secondary y-axis and 2 rows
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.75, 0.25],
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
+    )
+
+    # Add website visits trace (primary y-axis - left) - ROW 1
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=visits,
+        mode='lines+markers',
+        name='Total Website Visits',
+        line=dict(color='#2E86AB', width=4, shape='spline'),
+        marker=dict(size=8, color='#2E86AB', line=dict(width=2, color='white')),
+        hovertemplate='<b>%{x}</b><br>Total Visits: <b>%{y:,}</b><extra></extra>'
+    ), row=1, col=1, secondary_y=False)
+
+    # Add media spend trace (secondary y-axis - right) - ROW 1
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=media_spend,
+        mode='lines',
+        name='Hyundai Media Spend',
+        line=dict(width=3, color='#000000', dash='dot'),
+        opacity=0.8,
+        hovertemplate='<b>%{x}</b><br>Media Spend: <b>$%{y:,.0f}</b><extra></extra>'
+    ), row=1, col=1, secondary_y=True)
+
+    # Add vertical lines for months with offers
+    offer_months_list = []
+    offer_visits_list = []
+    offer_text_list = []
+
+    for i, month in enumerate(months):
+        if month in monthly_offers and monthly_offers[month]['has_offer']:
+            # Add vertical line
+            date_val = dates[i] if dates[i] else month
+            fig.add_vline(
+                x=month,
+                line_width=1,
+                line_dash="dash",
+                line_color="rgba(241, 143, 1, 0.3)",
+                row=1, col=1
+            )
+            offer_months_list.append(month)
+            offer_visits_list.append(visits[i])
+            offer_text_list.append(monthly_offers[month]['offer_display'])
+
+    # Add offer markers on the main chart
+    if offer_months_list:
+        fig.add_trace(go.Scatter(
+            x=offer_months_list,
+            y=offer_visits_list,
+            mode='markers',
+            name='Active Offers',
+            marker=dict(
+                size=12,
+                color='#F18F01',
+                symbol='circle',
+                line=dict(width=2, color='#ffffff'),
+                opacity=0.9
+            ),
+            hovertemplate='<b>%{x}</b><br>Visits: %{y:,}<br>Offer: %{text}<extra></extra>',
+            text=offer_text_list,
+            showlegend=False  # Hide from legend to reduce clutter
+        ), row=1, col=1, secondary_y=False)
+
+    # Add offer timeline in bottom subplot (ROW 2)
+    offer_data = [(month, monthly_offers[month]) for month in months if month in monthly_offers and monthly_offers[month]['has_offer']]
+
+    if offer_data:
+        unique_offers = list(set([item[1]['offer_display'] for item in offer_data]))
+        offer_mapping = {offer: i+1 for i, offer in enumerate(unique_offers)}
+
+        for offer_type in unique_offers:
+            offer_subset_months = [item[0] for item in offer_data if item[1]['offer_display'] == offer_type]
+            offer_subset_y = [offer_mapping[offer_type]] * len(offer_subset_months)
+
+            fig.add_trace(
+                go.Scatter(
+                    x=offer_subset_months,
+                    y=offer_subset_y,
+                    mode='markers+text',
+                    name=offer_type,
+                    marker=dict(size=12, symbol='square'),
+                    text=offer_subset_months,
+                    textposition="middle center",
+                    textfont=dict(size=10),
+                    hovertemplate=f'<b>%{{x}}</b><br>Offer: {offer_type}<extra></extra>',
+                    showlegend=False  # Hide from legend to reduce clutter
+                ),
+                row=2, col=1
+            )
+
+    fig.update_layout(
+        title=dict(
+            text='<b style="color:#1a1a1a; font-size:22px;">Total Website Visits vs Hyundai Media Spend</b><br><span style="color:#4a4a4a; font-size:14px;">Monthly Trends with Offer Overlay</span>',
+            x=0.5,
+            xanchor='center',
+            font=dict(color='#1a1a1a')
+        ),
+        font=dict(family="Arial", size=12, color='#1a1a1a'),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        height=750,
+        hovermode='x unified',
+        showlegend=True,
+        hoverlabel=dict(
+            bgcolor='white',
+            bordercolor='#1a1a1a',
+            font=dict(color='#1a1a1a')
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            bgcolor='white',
+            bordercolor='#1a1a1a',
+            borderwidth=2,
+            font=dict(color='#1a1a1a', size=11)
+        ),
+        margin=dict(l=80, r=120, t=120, b=80)
+    )
+
+    # Update main chart axes (Row 1)
+    fig.update_xaxes(
+        title=dict(text='<b>Month</b>', font=dict(size=14, color='#1a1a1a')),
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#d0d0d0',
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        row=1, col=1
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Website Visits</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=False,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#d0d0d0',
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        tickformat=',d',
+        row=1, col=1
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Media Spend ($)</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=True,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        tickformat='$,.0f',
+        row=1, col=1
+    )
+
+    # Update offer timeline axes (Row 2)
+    fig.update_xaxes(
+        showticklabels=False,
+        showgrid=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        row=2, col=1
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Offers</b>", font=dict(size=12, color='#1a1a1a')),
+        tickfont=dict(color='#1a1a1a', size=10),
+        showgrid=False,
+        showticklabels=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        row=2, col=1
+    )
+
+    return fig
+
+def create_offers_page_views_chart(web_data, media_spend_dict, monthly_offers):
+    """Create chart showing offers page views vs Hyundai media spend with offers"""
+
+    # Get Hyundai media spend
+    hyundai_media = media_spend_dict.get('Hyundai', {})
+
+    # Month order for proper sorting
+    month_order = ['Aug-23', 'Sep-23', 'Oct-23', 'Nov-23', 'Dec-23',
+                   'Jan-24', 'Feb-24', 'Mar-24', 'Apr-24', 'May-24', 'Jun-24', 'Jul-24', 'Aug-24', 'Sep-24', 'Oct-24', 'Nov-24', 'Dec-24',
+                   'Jan-25', 'Feb-25', 'Mar-25', 'Apr-25', 'May-25', 'Jun-25', 'Jul-25', 'Aug-25', 'Sep-25']
+
+    # Sort web_data by month order
+    web_data['Month_Order'] = web_data['Month'].map({month: i for i, month in enumerate(month_order)})
+    web_data_sorted = web_data.sort_values('Month_Order').drop('Month_Order', axis=1)
+
+    # Prepare data for chart
+    months = []
+    page_views = []
+    media_spend = []
+    dates = []
+
+    for _, row in web_data_sorted.iterrows():
+        month = row['Month']
+        months.append(month)
+        page_views.append(row['Offers_Page_Views'])
+        media_spend.append(hyundai_media.get(month, 0))
+        # Convert month to date
+        try:
+            dates.append(pd.to_datetime(month, format='%b-%y'))
+        except:
+            dates.append(None)
+
+    # Create chart with secondary y-axis and 2 rows
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.75, 0.25],
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
+    )
+
+    # Add offers page views trace (primary y-axis - left) - ROW 1
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=page_views,
+        mode='lines+markers',
+        name='Offers Page Views',
+        line=dict(color='#F18F01', width=4, shape='spline'),
+        marker=dict(size=8, color='#F18F01', line=dict(width=2, color='white')),
+        hovertemplate='<b>%{x}</b><br>Offers Page Views: <b>%{y:,}</b><extra></extra>'
+    ), row=1, col=1, secondary_y=False)
+
+    # Add media spend trace (secondary y-axis - right) - ROW 1
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=media_spend,
+        mode='lines',
+        name='Hyundai Media Spend',
+        line=dict(width=3, color='#000000', dash='dot'),
+        opacity=0.8,
+        hovertemplate='<b>%{x}</b><br>Media Spend: <b>$%{y:,.0f}</b><extra></extra>'
+    ), row=1, col=1, secondary_y=True)
+
+    # Add vertical lines for months with offers
+    offer_months_list = []
+    offer_page_views_list = []
+    offer_text_list = []
+
+    for i, month in enumerate(months):
+        if month in monthly_offers and monthly_offers[month]['has_offer']:
+            # Add vertical line
+            fig.add_vline(
+                x=month,
+                line_width=1,
+                line_dash="dash",
+                line_color="rgba(241, 143, 1, 0.3)",
+                row=1, col=1
+            )
+            offer_months_list.append(month)
+            offer_page_views_list.append(page_views[i])
+            offer_text_list.append(monthly_offers[month]['offer_display'])
+
+    # Add offer markers on the main chart
+    if offer_months_list:
+        fig.add_trace(go.Scatter(
+            x=offer_months_list,
+            y=offer_page_views_list,
+            mode='markers',
+            name='Active Offers',
+            marker=dict(
+                size=12,
+                color='#2E86AB',
+                symbol='circle',
+                line=dict(width=2, color='#ffffff'),
+                opacity=0.9
+            ),
+            hovertemplate='<b>%{x}</b><br>Page Views: %{y:,}<br>Offer: %{text}<extra></extra>',
+            text=offer_text_list,
+            showlegend=False  # Hide from legend to reduce clutter
+        ), row=1, col=1, secondary_y=False)
+
+    # Add offer timeline in bottom subplot (ROW 2)
+    offer_data = [(month, monthly_offers[month]) for month in months if month in monthly_offers and monthly_offers[month]['has_offer']]
+
+    if offer_data:
+        unique_offers = list(set([item[1]['offer_display'] for item in offer_data]))
+        offer_mapping = {offer: i+1 for i, offer in enumerate(unique_offers)}
+
+        for offer_type in unique_offers:
+            offer_subset_months = [item[0] for item in offer_data if item[1]['offer_display'] == offer_type]
+            offer_subset_y = [offer_mapping[offer_type]] * len(offer_subset_months)
+
+            fig.add_trace(
+                go.Scatter(
+                    x=offer_subset_months,
+                    y=offer_subset_y,
+                    mode='markers+text',
+                    name=offer_type,
+                    marker=dict(size=12, symbol='square'),
+                    text=offer_subset_months,
+                    textposition="middle center",
+                    textfont=dict(size=10),
+                    hovertemplate=f'<b>%{{x}}</b><br>Offer: {offer_type}<extra></extra>',
+                    showlegend=False  # Hide from legend to reduce clutter
+                ),
+                row=2, col=1
+            )
+
+    fig.update_layout(
+        title=dict(
+            text='<b style="color:#1a1a1a; font-size:22px;">Offers Page Views vs Hyundai Media Spend</b><br><span style="color:#4a4a4a; font-size:14px;">Monthly Trends with Offer Overlay</span>',
+            x=0.5,
+            xanchor='center',
+            font=dict(color='#1a1a1a')
+        ),
+        font=dict(family="Arial", size=12, color='#1a1a1a'),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        height=750,
+        hovermode='x unified',
+        showlegend=True,
+        hoverlabel=dict(
+            bgcolor='white',
+            bordercolor='#1a1a1a',
+            font=dict(color='#1a1a1a')
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            bgcolor='white',
+            bordercolor='#1a1a1a',
+            borderwidth=2,
+            font=dict(color='#1a1a1a', size=11)
+        ),
+        margin=dict(l=80, r=120, t=120, b=80)
+    )
+
+    # Update main chart axes (Row 1)
+    fig.update_xaxes(
+        title=dict(text='<b>Month</b>', font=dict(size=14, color='#1a1a1a')),
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#d0d0d0',
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        row=1, col=1
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Offers Page Views</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=False,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#d0d0d0',
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        tickformat=',d',
+        row=1, col=1
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Media Spend ($)</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=True,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        tickformat='$,.0f',
+        row=1, col=1
+    )
+
+    # Update offer timeline axes (Row 2)
+    fig.update_xaxes(
+        showticklabels=False,
+        showgrid=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        row=2, col=1
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Offers</b>", font=dict(size=12, color='#1a1a1a')),
+        tickfont=dict(color='#1a1a1a', size=10),
+        showgrid=False,
+        showticklabels=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        row=2, col=1
     )
 
     return fig
@@ -914,7 +1514,7 @@ def create_segment_offer_effectiveness_chart(df_offers, selected_segment=None):
 
             monthly_data[month][offer_type] = total_sales
 
-    # Create the chart
+    # Create the chart (no secondary y-axis for segments)
     fig = go.Figure()
 
     # Sort months chronologically
@@ -1085,6 +1685,11 @@ def main():
     if st.sidebar.button("🎯 **Segment Offer Effectiveness**", key="segment_btn", use_container_width=True):
         st.session_state.current_page = "Segment Offer Effectiveness"
     st.sidebar.caption("🚗 Analyze offer performance within vehicle segments")
+    st.sidebar.markdown("")
+
+    if st.sidebar.button("🌐 **Website Analytics**", key="website_btn", use_container_width=True):
+        st.session_state.current_page = "Website Analytics"
+    st.sidebar.caption("📊 Hyundai website traffic vs media spend correlation")
 
     # Get the selected page
     page = st.session_state.current_page
@@ -1313,6 +1918,74 @@ def main():
             # Add timestamp
             from datetime import datetime
             st.caption(f"Analysis generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+
+    # Website Analytics Page
+    elif page == "Website Analytics":
+        st.title("🌐 Website Analytics Dashboard")
+        st.markdown("Analyze Hyundai website traffic and offers page engagement in relation to media spend")
+
+        # Load website and media spend data
+        web_data = load_website_data()
+        media_spend_dict = load_make_level_media_spend()
+        monthly_offers = get_hyundai_offers_by_month(df_offers)
+
+        # Summary metrics
+        st.subheader("📊 Overall Summary")
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            total_visits = web_data['Total_Visits'].sum()
+            st.metric("Total Website Visits", f"{total_visits:,}")
+
+        with col2:
+            total_offers_views = web_data['Offers_Page_Views'].sum()
+            st.metric("Total Offers Page Views", f"{total_offers_views:,}")
+
+        with col3:
+            conversion_rate = (total_offers_views / total_visits * 100) if total_visits > 0 else 0
+            st.metric("Offers Conversion Rate", f"{conversion_rate:.2f}%")
+
+        with col4:
+            hyundai_media = media_spend_dict.get('Hyundai', {})
+            total_media_spend = sum(hyundai_media.values())
+            st.metric("Total Hyundai Media Spend", f"${total_media_spend:,.0f}")
+
+        st.divider()
+
+        # Chart 1: Total Website Visits
+        st.subheader("📈 Total Website Visits vs Media Spend")
+        fig1 = create_website_visits_chart(web_data, media_spend_dict, monthly_offers)
+        st.plotly_chart(fig1, use_container_width=True)
+
+        st.divider()
+
+        # Chart 2: Offers Page Views
+        st.subheader("🎯 Offers Page Views vs Media Spend")
+        fig2 = create_offers_page_views_chart(web_data, media_spend_dict, monthly_offers)
+        st.plotly_chart(fig2, use_container_width=True)
+
+        # Additional insights
+        st.divider()
+        st.subheader("💡 Key Insights")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Engagement Metrics:**")
+            avg_visits = web_data['Total_Visits'].mean()
+            avg_offers_views = web_data['Offers_Page_Views'].mean()
+            st.write(f"- Average monthly visits: **{avg_visits:,.0f}**")
+            st.write(f"- Average monthly offers page views: **{avg_offers_views:,.0f}**")
+            st.write(f"- Average conversion to offers page: **{(avg_offers_views/avg_visits*100):.2f}%**")
+
+        with col2:
+            st.markdown("**Media Investment:**")
+            avg_media = sum(hyundai_media.values()) / len(hyundai_media) if hyundai_media else 0
+            st.write(f"- Average monthly media spend: **${avg_media:,.0f}**")
+            cost_per_visit = total_media_spend / total_visits if total_visits > 0 else 0
+            cost_per_offer_view = total_media_spend / total_offers_views if total_offers_views > 0 else 0
+            st.write(f"- Cost per website visit: **${cost_per_visit:.2f}**")
+            st.write(f"- Cost per offers page view: **${cost_per_offer_view:.2f}**")
 
     # Original Hyundai Model Analysis Page
     else:

@@ -25,7 +25,7 @@ model = genai.GenerativeModel('gemini-2.0-flash-exp')
 @st.cache_data
 def load_comprehensive_data():
     """Load the comprehensive joined dataset"""
-    df = pd.read_csv('comprehensive_joined_dataset.csv')
+    df = pd.read_csv('data/generated/comprehensive_joined_dataset.csv')
 
     # Convert sales to numeric, handling empty strings
     df['Sales_Total'] = pd.to_numeric(df['Sales_Total'], errors='coerce').fillna(0)

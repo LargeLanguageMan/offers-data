@@ -40,7 +40,7 @@ def create_comprehensive_joined_dataset():
         return df
 
     print("Loading enhanced-data-v2.csv...")
-    df_enhanced_v2 = load_csv_with_malformed_header('enhanced-data-v2.csv')
+    df_enhanced_v2 = load_csv_with_malformed_header('data/source/enhanced-data-v2.csv')
 
     # Rename columns for consistency
     df_enhanced_v2 = df_enhanced_v2.rename(columns={
@@ -49,7 +49,7 @@ def create_comprehensive_joined_dataset():
     })
 
     print("Loading original car-model-report.csv for media spend data...")
-    df_original = load_csv_with_malformed_header('car-model-report.csv')
+    df_original = load_csv_with_malformed_header('data/source/car-model-report.csv')
     df_original = df_original.rename(columns={
         'SalesRank': 'Sales_Rank',
         'Monthly Average': 'Monthly_Average'
@@ -167,7 +167,7 @@ def create_comprehensive_joined_dataset():
     df_final = df_final.sort_values(['Month_Order', 'Make', 'Model']).drop('Month_Order', axis=1)
 
     # Save the comprehensive joined dataset
-    output_file = 'comprehensive_joined_dataset.csv'
+    output_file = 'data/generated/comprehensive_joined_dataset.csv'
     df_final.to_csv(output_file, index=False)
 
     print(f"\n✅ Comprehensive joined dataset created: {output_file}")
