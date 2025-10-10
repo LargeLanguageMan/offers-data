@@ -1033,6 +1033,176 @@ def create_market_offer_effectiveness_chart(df_offers, selected_make=None, selec
 
     return fig
 
+def create_offer_by_make_chart(df_offers, selected_offer, top_n=None):
+    """Create chart showing which makes have a specific offer in market"""
+
+    # Load make-level media spend data
+    media_spend_dict = load_make_level_media_spend()
+
+    # Filter data to only rows that contain the selected offer
+    df_filtered = df_offers[df_offers['Retail_Offer'].apply(
+        lambda x: selected_offer in parse_combined_offers(x) if pd.notna(x) else False
+    )]
+
+    if df_filtered.empty:
+        # Return empty chart if no data
+        fig = go.Figure()
+        fig.update_layout(
+            title=f"No data found for offer: {selected_offer}",
+            xaxis_title="Month",
+            yaxis_title="Sales Volume"
+        )
+        return fig
+
+    # Get all makes that have this offer, ranked by total sales
+    make_sales = df_filtered.groupby('Make')['Sales_Total'].sum().sort_values(ascending=False)
+
+    # Apply top_n filter if specified
+    if top_n and top_n > 0:
+        makes_with_offer = make_sales.head(top_n).index.tolist()
+        title_suffix = f" (Top {top_n})"
+    else:
+        makes_with_offer = make_sales.index.tolist()
+        title_suffix = ""
+
+    # Re-filter data to only include selected makes
+    df_filtered = df_filtered[df_filtered['Make'].isin(makes_with_offer)]
+
+    # Create monthly aggregation for each make and media spend
+    monthly_data = {}
+    monthly_media_spend = {}
+
+    for month in df_filtered['Month'].unique():
+        monthly_data[month] = {}
+        monthly_media_spend[month] = {}
+
+        # Calculate sales and media spend by make
+        month_data = df_filtered[df_filtered['Month'] == month]
+        for make in makes_with_offer:
+            make_month_data = month_data[month_data['Make'] == make]
+
+            # Sum sales for this make/month with the selected offer
+            total_sales = make_month_data['Sales_Total'].sum()
+            monthly_data[month][make] = total_sales
+
+            # Get media spend for this make/month
+            if make in media_spend_dict and month in media_spend_dict[make]:
+                monthly_media_spend[month][make] = media_spend_dict[make][month]
+            else:
+                monthly_media_spend[month][make] = 0
+
+    # Create the chart with secondary y-axis
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Sort months chronologically
+    month_order = ['Aug-23', 'Sep-23', 'Oct-23', 'Nov-23', 'Dec-23',
+                   'Jan-24', 'Feb-24', 'Mar-24', 'Apr-24', 'May-24', 'Jun-24', 'Jul-24', 'Aug-24', 'Sep-24', 'Oct-24', 'Nov-24', 'Dec-24',
+                   'Jan-25', 'Feb-25', 'Mar-25', 'Apr-25', 'May-25', 'Jun-25', 'Jul-25', 'Aug-25', 'Sep-25']
+
+    sorted_months = [month for month in month_order if month in monthly_data.keys()]
+
+    # Enhanced color palette with better contrast and visibility
+    colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#6A994E', '#7209B7', '#F72585', '#4361EE', '#F77F00', '#FCBF49',
+              '#06FFA5', '#FB8500', '#219EBC', '#8ECAE6', '#FFB3BA', '#BAFFC9', '#BAE1FF', '#FFFFBA', '#E0BBE4', '#957DAD']
+
+    # Add traces for each make's sales volume (primary y-axis - left)
+    for i, make in enumerate(makes_with_offer):
+        sales_data = [monthly_data[month].get(make, 0) for month in sorted_months]
+
+        # Only add if there's meaningful data
+        if max(sales_data) > 0:
+            fig.add_trace(go.Scatter(
+                x=sorted_months,
+                y=sales_data,
+                mode='lines+markers',
+                name=f'{make} Sales',
+                line=dict(width=4, color=colors[i % len(colors)], shape='spline'),
+                marker=dict(size=8, color=colors[i % len(colors)], line=dict(width=2, color='white')),
+                hovertemplate=f'<b>{make}</b><br>Month: %{{x}}<br>Sales Volume: <b>%{{y:,}}</b><extra></extra>'
+            ), secondary_y=False)
+
+    # Add media spend lines for each make (secondary y-axis - right)
+    for i, make in enumerate(makes_with_offer):
+        media_data = [monthly_media_spend[month].get(make, 0) for month in sorted_months]
+
+        # Only add if there's meaningful data
+        if max(media_data) > 0:
+            fig.add_trace(go.Scatter(
+                x=sorted_months,
+                y=media_data,
+                mode='lines',
+                name=f'{make} Media Spend',
+                line=dict(width=2, color=colors[i % len(colors)], dash='dot'),
+                opacity=0.6,
+                hovertemplate=f'<b>{make} Media Spend</b><br>Month: %{{x}}<br>Total: <b>$%{{y:,.0f}}</b><extra></extra>'
+            ), secondary_y=True)
+
+    fig.update_layout(
+        title=dict(
+            text=f'<b style="color:#1a1a1a; font-size:22px;">Makes with "{selected_offer}" Offer{title_suffix}</b><br><span style="color:#4a4a4a; font-size:14px;">Sales Volume and Media Spend by Make</span>',
+            x=0.5,
+            xanchor='center',
+            font=dict(color='#1a1a1a')
+        ),
+        xaxis=dict(
+            title=dict(text='<b>Month</b>', font=dict(size=14, color='#1a1a1a')),
+            tickfont=dict(color='#1a1a1a', size=11),
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#d0d0d0',
+            linecolor='#1a1a1a',
+            linewidth=2,
+            showline=True,
+            mirror=True,
+            tickangle=-45
+        ),
+        hovermode='x unified',
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        height=600,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            bgcolor='white',
+            bordercolor='#1a1a1a',
+            borderwidth=2,
+            font=dict(color='#1a1a1a', size=12, family='Arial')
+        ),
+        margin=dict(l=80, r=180, t=120, b=80)
+    )
+
+    # Set y-axes titles
+    fig.update_yaxes(
+        title=dict(text="<b>Sales Volume</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=False,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#d0d0d0',
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True
+    )
+
+    fig.update_yaxes(
+        title=dict(text="<b>Media Spend ($)</b>", font=dict(size=14, color='#1a1a1a')),
+        secondary_y=True,
+        tickfont=dict(color='#1a1a1a', size=11),
+        showgrid=False,
+        linecolor='#1a1a1a',
+        linewidth=2,
+        showline=True,
+        mirror=True,
+        tickformat='$,.0f'
+    )
+
+    return fig
+
 def create_website_visits_chart(web_data, media_spend_dict, monthly_offers):
     """Create chart showing total website visits vs Hyundai media spend with offers"""
 
@@ -1667,6 +1837,11 @@ def main():
     st.sidebar.title("🚗 Dashboard Navigation")
     st.sidebar.markdown("Choose your analysis type:")
 
+    # Add clear cache button at the top
+    if st.sidebar.button("🔄 Clear Cache & Reload Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
     # Initialize session state for page selection if not exists
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Hyundai Model Analysis"
@@ -1690,6 +1865,11 @@ def main():
     if st.sidebar.button("🌐 **Website Analytics**", key="website_btn", use_container_width=True):
         st.session_state.current_page = "Website Analytics"
     st.sidebar.caption("📊 Hyundai website traffic vs media spend correlation")
+    st.sidebar.markdown("")
+
+    if st.sidebar.button("📋 **VFACTS Data**", key="vfacts_btn", use_container_width=True):
+        st.session_state.current_page = "VFACTS Data"
+    st.sidebar.caption("📊 Raw sales and media spend data by segment/make/model")
 
     # Get the selected page
     page = st.session_state.current_page
@@ -1819,6 +1999,78 @@ def main():
             # Add timestamp
             from datetime import datetime
             st.caption(f"Analysis generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+
+        # Add separator
+        st.markdown("---")
+
+        # New section: Offer-based analysis (inverse view)
+        st.subheader("🔍 Offer Distribution Across Makes")
+        st.markdown("Select an offer to see which makes are using it and their performance")
+
+        # Offer selector
+        col1, col2, col3 = st.columns([2, 1, 1])
+
+        with col1:
+            # Get all unique offers from the dataset
+            all_offers = get_all_offer_types(df_offers)
+            selected_offer = st.selectbox(
+                "Select Offer Type:",
+                all_offers,
+                key="offer_selector",
+                help="Choose an offer to see which makes have it in market"
+            )
+
+        with col2:
+            # Count makes with this offer
+            if selected_offer:
+                df_with_offer = df_offers[df_offers['Retail_Offer'].apply(
+                    lambda x: selected_offer in parse_combined_offers(x) if pd.notna(x) else False
+                )]
+                makes_count = df_with_offer['Make'].nunique()
+                st.metric("Makes with this Offer", makes_count)
+
+        with col3:
+            # Number of makes to display
+            if selected_offer:
+                top_n_makes = st.number_input(
+                    "Top N Makes to Show:",
+                    min_value=1,
+                    max_value=makes_count,
+                    value=min(5, makes_count),
+                    key="top_n_makes",
+                    help="Show top N makes by sales volume"
+                )
+
+        # Create and display the offer-by-make chart
+        if selected_offer:
+            fig_offer = create_offer_by_make_chart(df_offers, selected_offer, top_n_makes)
+            st.plotly_chart(fig_offer, use_container_width=True)
+
+            # Summary metrics for the selected offer
+            st.subheader(f"📊 '{selected_offer}' Offer Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            # Filter data for this offer
+            df_offer_filtered = df_offers[df_offers['Retail_Offer'].apply(
+                lambda x: selected_offer in parse_combined_offers(x) if pd.notna(x) else False
+            )]
+
+            with col1:
+                total_sales = df_offer_filtered['Sales_Total'].sum()
+                st.metric("Total Sales Volume", f"{total_sales:,}")
+
+            with col2:
+                unique_makes = df_offer_filtered['Make'].nunique()
+                st.metric("Makes Using Offer", unique_makes)
+
+            with col3:
+                unique_models = df_offer_filtered['Model'].nunique()
+                st.metric("Models with Offer", unique_models)
+
+            with col4:
+                months_active = df_offer_filtered['Month'].nunique()
+                st.metric("Months Active", months_active)
 
     # Segment Offer Effectiveness Page
     elif page == "Segment Offer Effectiveness":
@@ -1986,6 +2238,183 @@ def main():
             cost_per_offer_view = total_media_spend / total_offers_views if total_offers_views > 0 else 0
             st.write(f"- Cost per website visit: **${cost_per_visit:.2f}**")
             st.write(f"- Cost per offers page view: **${cost_per_offer_view:.2f}**")
+
+    # VFACTS Data Page
+    elif page == "VFACTS Data":
+        st.title("📋 VFACTS Sales Data")
+        st.markdown("View raw sales and media spend data by segment, make, or model")
+
+        # Load media spend data
+        media_spend_dict = load_make_level_media_spend()
+
+        # Available months
+        all_months = sorted(df_comprehensive['Month'].unique())
+        month_order = ['Aug-23', 'Sep-23', 'Oct-23', 'Nov-23', 'Dec-23',
+                       'Jan-24', 'Feb-24', 'Mar-24', 'Apr-24', 'May-24', 'Jun-24', 'Jul-24', 'Aug-24', 'Sep-24', 'Oct-24', 'Nov-24', 'Dec-24',
+                       'Jan-25', 'Feb-25', 'Mar-25', 'Apr-25', 'May-25', 'Jun-25', 'Jul-25', 'Aug-25', 'Sep-25']
+        available_months = [m for m in month_order if m in all_months]
+
+        # Filter Section
+        st.subheader("🔍 Filters")
+
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            filter_type = st.radio(
+                "Filter by:",
+                ["Segment", "Make", "Model"],
+                key="vfacts_filter_type"
+            )
+
+        with col2:
+            if filter_type == "Segment":
+                all_segments = sorted(df_comprehensive['Segment'].unique())
+                selected_filter = st.multiselect(
+                    "Select Segment(s):",
+                    all_segments,
+                    default=[all_segments[0]] if all_segments else [],
+                    key="vfacts_segment"
+                )
+            elif filter_type == "Make":
+                all_makes = sorted(df_comprehensive['Make'].unique())
+                selected_filter = st.multiselect(
+                    "Select Make(s):",
+                    all_makes,
+                    key="vfacts_make"
+                )
+            else:  # Model
+                # Create a list of "Make - Model" combinations
+                make_model_df = df_comprehensive[['Make', 'Model']].drop_duplicates()
+                make_model_df['Display'] = make_model_df['Make'] + ' - ' + make_model_df['Model']
+                all_models = sorted(make_model_df['Display'].unique())
+
+                selected_display = st.multiselect(
+                    "Select Model(s):",
+                    all_models,
+                    key="vfacts_model"
+                )
+
+                # Convert back to make-model pairs for filtering
+                selected_filter = selected_display
+
+        # Date range selector - improved layout
+        st.write("**Date Range:**")
+        col_start, col_end = st.columns(2)
+
+        with col_start:
+            start_month = st.selectbox(
+                "From:",
+                available_months,
+                index=0,
+                key="vfacts_start_month"
+            )
+
+        with col_end:
+            end_month = st.selectbox(
+                "To:",
+                available_months,
+                index=len(available_months) - 1,
+                key="vfacts_end_month"
+            )
+
+        # Filter data based on selection
+        if not selected_filter:
+            st.warning(f"⚠️ Please select at least one {filter_type.lower()}")
+            filtered_df = pd.DataFrame()
+        else:
+            if filter_type == "Segment":
+                filtered_df = df_comprehensive[df_comprehensive['Segment'].isin(selected_filter)].copy()
+            elif filter_type == "Make":
+                filtered_df = df_comprehensive[df_comprehensive['Make'].isin(selected_filter)].copy()
+            else:  # Model - need to parse "Make - Model" format
+                # Parse the selected "Make - Model" strings
+                make_model_pairs = [item.split(' - ', 1) for item in selected_filter]
+
+                # Filter by matching make-model combinations
+                mask = pd.Series([False] * len(df_comprehensive))
+                for make, model in make_model_pairs:
+                    mask |= (df_comprehensive['Make'] == make) & (df_comprehensive['Model'] == model)
+
+                filtered_df = df_comprehensive[mask].copy()
+
+        # Filter by date range
+        if not filtered_df.empty:
+            start_idx = month_order.index(start_month)
+            end_idx = month_order.index(end_month)
+            selected_months = month_order[start_idx:end_idx + 1]
+            filtered_df = filtered_df[filtered_df['Month'].isin(selected_months)]
+
+            # Add media spend to the dataframe
+            filtered_df['Media_Spend'] = filtered_df.apply(
+                lambda row: media_spend_dict.get(row['Make'], {}).get(row['Month'], 0),
+                axis=1
+            )
+
+        # Display summary metrics
+        if not filtered_df.empty:
+            st.divider()
+            st.subheader("📊 Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                total_sales = filtered_df['Sales_Total'].sum()
+                st.metric("Total Sales", f"{total_sales:,.0f}")
+
+            with col2:
+                total_media = filtered_df['Media_Spend'].sum()
+                st.metric("Total Media Spend", f"${total_media:,.0f}")
+
+            with col3:
+                unique_models = filtered_df['Model'].nunique()
+                st.metric("Unique Models", unique_models)
+
+            with col4:
+                unique_makes = filtered_df['Make'].nunique()
+                st.metric("Unique Makes", unique_makes)
+
+            # Display data table
+            st.divider()
+            st.subheader("📋 Data Table")
+
+            # Prepare display dataframe
+            display_df = filtered_df[['Month', 'Make', 'Model', 'Segment', 'Sales_Total', 'Media_Spend', 'Retail_Offer']].copy()
+            display_df = display_df.sort_values(['Month', 'Make', 'Model'])
+
+            # Format the dataframe for display
+            display_df['Sales_Total'] = display_df['Sales_Total'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+            display_df['Media_Spend'] = display_df['Media_Spend'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "$0")
+
+            # Rename columns for better display
+            display_df = display_df.rename(columns={
+                'Sales_Total': 'Sales',
+                'Media_Spend': 'Media Spend',
+                'Retail_Offer': 'Retail Offer'
+            })
+
+            # Display the dataframe
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                height=600,
+                hide_index=True
+            )
+
+            # Download button
+            st.divider()
+            csv = filtered_df.to_csv(index=False)
+
+            # Create filename with selected filters
+            filter_names = "_".join([str(f).replace(" ", "_") for f in selected_filter[:3]])
+            if len(selected_filter) > 3:
+                filter_names += "_and_more"
+
+            st.download_button(
+                label="📥 Download Data as CSV",
+                data=csv,
+                file_name=f"vfacts_data_{filter_type}_{filter_names}_{start_month}_to_{end_month}.csv",
+                mime="text/csv"
+            )
 
     # Original Hyundai Model Analysis Page
     else:
